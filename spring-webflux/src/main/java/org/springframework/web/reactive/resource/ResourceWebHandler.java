@@ -27,6 +27,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -122,6 +123,9 @@ public class ResourceWebHandler implements WebHandler, InitializingBean {
 
 	@Nullable
 	private Map<String, MediaType> mediaTypes;
+
+	@Nullable
+	private Function<Resource, String> etagGenerator;
 
 	private boolean useLastModified = true;
 
@@ -275,6 +279,18 @@ public class ResourceWebHandler implements WebHandler, InitializingBean {
 	 */
 	public boolean isUseLastModified() {
 		return this.useLastModified;
+	}
+	/**
+	 * Configure a generator function that will be used to create the ETag information,
+	 * given a {@link Resource} that is about to be written to the response.
+	 * <p>This function should return a String that will be used as an argument in
+	 * {@link ServerWebExchange#checkNotModified(String)}, or {@code null} if no value
+	 * can be generated for the given resource.
+	 * @param etagGenerator the HTTP ETag generator function to use.
+	 * @since 6.1
+	 */
+	public void setEtagGenerator(@Nullable Function<Resource, String> etagGenerator) {
+		this.etagGenerator = etagGenerator;
 	}
 
 	/**
@@ -496,7 +512,8 @@ public class ResourceWebHandler implements WebHandler, InitializingBean {
 	protected String processPath(String path) {
 		path = StringUtils.replace(path, "\\", "/");
 		path = cleanDuplicateSlashes(path);
-		return cleanLeadingSlash(path);
+		path = cleanLeadingSlash(path);
+		return normalizePath(path);
 	}
 
 	private String cleanDuplicateSlashes(String path) {
@@ -536,6 +553,21 @@ public class ResourceWebHandler implements WebHandler, InitializingBean {
 			}
 		}
 		return (slash ? "/" : "");
+	}
+
+	private static String normalizePath(String path) {
+		if (path.contains("%")) {
+			try {
+				path = URLDecoder.decode(path, StandardCharsets.UTF_8);
+			}
+			catch (Exception ex) {
+				return "";
+			}
+			if (path.contains("../")) {
+				path = StringUtils.cleanPath(path);
+			}
+		}
+		return path;
 	}
 
 	/**
@@ -596,7 +628,7 @@ public class ResourceWebHandler implements WebHandler, InitializingBean {
 				return true;
 			}
 		}
-		if (path.contains("..") && StringUtils.cleanPath(path).contains("../")) {
+		if (path.contains("../")) {
 			if (logger.isWarnEnabled()) {
 				logger.warn(LogFormatUtils.formatValue(
 						"Path contains \"../\" after call to StringUtils#cleanPath: [" + path + "]", -1, true));
