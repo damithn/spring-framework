@@ -25,6 +25,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.function.Function;
 
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -145,6 +146,9 @@ public class ResourceHttpRequestHandler extends WebContentGenerator
 
 	@Nullable
 	private StringValueResolver embeddedValueResolver;
+
+	@Nullable
+	private Function<Resource, String> etagGenerator;
 
 
 	public ResourceHttpRequestHandler() {
@@ -381,6 +385,29 @@ public class ResourceHttpRequestHandler extends WebContentGenerator
 	 */
 	public boolean isUseLastModified() {
 		return this.useLastModified;
+	}
+
+	/**
+	 * Configure a generator function that will be used to create the ETag information,
+	 * given a {@link Resource} that is about to be written to the response.
+	 * <p>This function should return a String that will be used as an argument in
+	 * {@link ServletWebRequest#checkNotModified(String)}, or {@code null} if no value
+	 * can be generated for the given resource.
+	 * @param etagGenerator the HTTP ETag generator function to use.
+	 * @since 6.1
+	 */
+	public void setEtagGenerator(@Nullable Function<Resource, String> etagGenerator) {
+		this.etagGenerator = etagGenerator;
+	}
+
+	/**
+	 * Return the HTTP ETag generator function to be used when serving resources.
+	 * @return the HTTP ETag generator function
+	 * @since 6.1
+	 */
+	@Nullable
+	public Function<Resource, String> getEtagGenerator() {
+		return this.etagGenerator;
 	}
 
 	/**
@@ -650,7 +677,8 @@ public class ResourceHttpRequestHandler extends WebContentGenerator
 	protected String processPath(String path) {
 		path = StringUtils.replace(path, "\\", "/");
 		path = cleanDuplicateSlashes(path);
-		return cleanLeadingSlash(path);
+		path = cleanLeadingSlash(path);
+		return normalizePath(path);
 	}
 
 	private String cleanDuplicateSlashes(String path) {
@@ -690,6 +718,21 @@ public class ResourceHttpRequestHandler extends WebContentGenerator
 			}
 		}
 		return (slash ? "/" : "");
+	}
+
+	private static String normalizePath(String path) {
+		if (path.contains("%")) {
+			try {
+				path = URLDecoder.decode(path, StandardCharsets.UTF_8);
+			}
+			catch (Exception ex) {
+				return "";
+			}
+			if (path.contains("../")) {
+				path = StringUtils.cleanPath(path);
+			}
+		}
+		return path;
 	}
 
 	/**
@@ -751,7 +794,7 @@ public class ResourceHttpRequestHandler extends WebContentGenerator
 				return true;
 			}
 		}
-		if (path.contains("..") && StringUtils.cleanPath(path).contains("../")) {
+		if (path.contains("../")) {
 			if (logger.isWarnEnabled()) {
 				logger.warn(LogFormatUtils.formatValue(
 						"Path contains \"../\" after call to StringUtils#cleanPath: [" + path + "]", -1, true));
